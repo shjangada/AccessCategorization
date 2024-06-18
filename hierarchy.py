@@ -1,9 +1,10 @@
 import pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
-import csv
 
 # Load the dataset
-df = pd.read_csv('data/role_mining_data.csv')
+df = pd.read_csv('data/small_data.csv')
 
 # Create a combined column for Application Name + Role or Permission
 df['App_Role'] = df['Application Name'] + ' - ' + df['Role or Permission']
@@ -19,8 +20,6 @@ df = df.merge(df_pivot, on='Username', how='left')
 # Identify common accesses and their percentages
 access_columns = df_pivot.columns
 mean_access = df[access_columns].mean()
-
-# Determine the threshold
 threshold = mean_access.mean() + mean_access.std()
 
 # Function to get common accesses above a certain threshold
@@ -35,7 +34,6 @@ def get_common_accesses(df, access_columns, threshold):
 
 # Check if we have enough data to perform clustering
 if len(df) >= 10:
-    # Prepare features for clustering
     encoded_dept = pd.get_dummies(df['Department'], prefix='dept_')
     encoded_job = pd.get_dummies(df['Job Title'], prefix='job_')
     encoded_type = pd.get_dummies(df['EmployeeType'], prefix='type_')
@@ -75,11 +73,8 @@ else:
 
 # Analyze clusters and provide access recommendations
 cluster_recommendations = []
-
-# Track written accesses to avoid duplicates
 written_accesses = set()
-
-# Initialize sets to track which accesses have been recommended at higher hierarchy levels
+recommended_common = set()
 recommended_employee_type = set()
 recommended_department = set()
 
@@ -97,6 +92,7 @@ if common_accesses_all:
             'Common Accesses': [access]
         })
         written_accesses.add((app_name, role))
+        recommended_common.add((app_name, role))
 
 # Loop through each cluster and generate recommendations
 for cluster in range(df['Cluster'].nunique()):
@@ -109,7 +105,7 @@ for cluster in range(df['Cluster'].nunique()):
         if common_accesses:
             for access in common_accesses:
                 app_name, role = access.split(' - ')
-                if (department, app_name, role) not in written_accesses:
+                if (department, app_name, role) not in written_accesses and (app_name, role) not in recommended_common:
                     cluster_recommendations.append({
                         'Hierarchy': 'Department',
                         'Employee Type': 'All',
@@ -127,7 +123,7 @@ for cluster in range(df['Cluster'].nunique()):
         if common_accesses:
             for access in common_accesses:
                 app_name, role = access.split(' - ')
-                if (employee_type, app_name, role) not in written_accesses:
+                if (employee_type, app_name, role) not in written_accesses and (app_name, role) not in recommended_common:
                     cluster_recommendations.append({
                         'Hierarchy': 'Employee Type',
                         'Employee Type': employee_type,
@@ -147,9 +143,8 @@ for cluster in range(df['Cluster'].nunique()):
             if common_accesses:
                 for access in common_accesses:
                     app_name, role = access.split(' - ')
-                    if (employee_type, department, app_name, role) not in written_accesses:
-                        # Check if this access has been recommended at Employee Type level
-                        if (employee_type, app_name, role) not in recommended_employee_type:
+                    if (employee_type, department, app_name, role) not in written_accesses and (employee_type, app_name, role) not in recommended_employee_type:
+                        if (app_name, role) not in recommended_common:
                             cluster_recommendations.append({
                                 'Hierarchy': 'Employee Type + Department',
                                 'Employee Type': employee_type,
@@ -160,37 +155,26 @@ for cluster in range(df['Cluster'].nunique()):
                             written_accesses.add((employee_type, department, app_name, role))
                             recommended_department.add((department, app_name, role))  # Mark as recommended at department level
 
-# Write recommendations to CSV file
-output_file = 'data/recommendations.csv'
+# Convert the list of recommendations to a DataFrame for visualization
+recommendations_df = pd.DataFrame(cluster_recommendations)
 
-try:
-    with open(output_file, 'w', newline='') as csvfile:
-        fieldnames = ['Hierarchy', 'Employee Type', 'Department', 'Job Title', 'App Name', 'Role']
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        
-        writer.writeheader()
-        
-        # Write unique recommendations
-        for recommendation in cluster_recommendations:
-            hierarchy = recommendation['Hierarchy']
-            employee_type = recommendation['Employee Type']
-            department = recommendation['Department']
-            job_title = recommendation['Job Title']
-            common_accesses = recommendation['Common Accesses']
-            
-            for access in common_accesses:
-                app_name, role = access.split(' - ')
-                writer.writerow({
-                    'Hierarchy': hierarchy,
-                    'Employee Type': employee_type,
-                    'Department': department,
-                    'Job Title': job_title,
-                    'App Name': app_name,
-                    'Role': role
-                })
+# Visualize the number of recommendations by hierarchy level
+plt.figure(figsize=(10, 6))
+recommendations_df['Hierarchy'].value_counts().plot(kind='bar')
+plt.title('Number of Recommendations by Hierarchy Level')
+plt.xlabel('Hierarchy Level')
+plt.ylabel('Count of Recommendations')
+plt.xticks(rotation=45)
+plt.show()
 
-    print(f"Recommendations written to {output_file}.")
-except IOError as e:
-    print(f"Error writing recommendations to CSV: {str(e)}")
-
-print("Exiting the program.")
+# Visualize the clusters
+if 'Cluster' in df.columns:
+    pca = PCA(n_components=2)
+    pca_features = pca.fit_transform(features)
+    plt.figure(figsize=(10, 6))
+    scatter = plt.scatter(pca_features[:, 0], pca_features[:, 1], c=df['Cluster'], cmap='viridis', s=100)
+    plt.title('Cluster Visualization')
+    plt.xlabel('PCA Component 1')
+    plt.ylabel('PCA Component 2')
+    plt.colorbar(scatter, label='Cluster')
+    plt.show()
